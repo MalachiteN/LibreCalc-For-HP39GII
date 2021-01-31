@@ -1,4 +1,6 @@
-# [LibreCalc-For-HP39GII](https://github.com/Repeerc/LibreCalc-For-HP39GII)
+# [ExistOS-For-HP39GII](https://github.com/Repeerc/LibreCalc-For-HP39GII)
+
+[English readme](./README_en.md)
 
 一个开源的HP39GII固件项目
 
@@ -6,15 +8,40 @@
 
 [![GPL Licence](https://badges.frapsoft.com/os/gpl/gpl.png?v=103)](https://opensource.org/licenses/GPL-3.0/)
 
-简介还没写，先行测试。
+本固件项目由一群计算器爱好者始创，使用了[FreeRTOS kernel](https://github.com/FreeRTOS/FreeRTOS)、[TinyUSB](https://github.com/hathach/tinyusb)、[FatFs](http://elm-chan.org/fsw/ff/00index_e.html)、[dhara](https://github.com/dlbeer/dhara)等库。我们非常欢迎同好试用和改善本项目的代码，也非常乐意听取您的宝贵意见。期待您的参与！
+## 目前工作进展
+- [x] Boot
+- [x] 调试串口
+- [x] LCD屏幕驱动
+- [x] STMP3770中断控制器
+- [x] 键盘驱动（GPIO轮询）
+- [x] 定时器驱动
+- [x] CPU频率设定
+- [x] RTC时钟
+- [x] USB大容量存储模式
+- [x] USB串口控制台
+- [x] FLASH驱动
+- [x] FATFS文件系统
+- [x] 多任务
+- [ ] 虚拟内存
+- [ ] 进程、ELF加载
+- [ ] 用户界面GUI
+- [ ] 电源管理
+- [ ] Linux 5.4 半虚拟化双内核实现
+- [ ] 完全脱离官方刷机工具的固件升级
+
+目前工作进展：已经完成了操作系统大部分内核和一些必要的硬件驱动。但由于未弄清STMP3770固件刷入机制，因此需要在Win7\WinXP环境下用计算器官方的固件升级软件刷入本固件。同时还没有用户界面，现在的工作重心是实现虚拟内存管理和进程加载。关于用户界面GUI等还在讨论中，如有宝贵意见可于Issues提出。
+
 
 ## 安装
 
-**目前仅支持Windows平台**
+### GNU Make
+
+**此方式目前仅支持Windows平台**
 
 1. 使用任意方法把本项目源码下载到您的电脑上的任意位置。
 
-2. 前往[https://github.com/Repeerc/LibreCalc-For-HP39GII/releases/tag/0.0.1](https://github.com/Repeerc/LibreCalc-For-HP39GII/releases/tag/0.0.1)下载编译工具链。
+2. 前往[https://github.com/Repeerc/ExistOS-For-HP39GII/releases/tag/0.0.1](https://github.com/Repeerc/ExistOS-For-HP39GII/releases/tag/0.0.1)下载编译工具链。
 
 3. 使本项目源码文件夹和编译工具链文件夹处于同级。如下所示
 
@@ -31,6 +58,32 @@
 4. 双击运行hp39gii文件夹下的console.bat
 
 5. 使用`make`进行编译、`make flash`刷入编译好的固件。
+
+### CMake
+
+1. 安装 arm-none-eabi-gcc. Linux系统可以用包管理器安装，Windows系统可以从[这里](https://developer.arm.com/tools-and-software/open-source-software/developer-tools/gnu-toolchain/gnu-rm/downloads)下载. 对于Windows系统,请将安装目录下的./bin路径添加至PATH环境变量.
+
+2. 对于Linux系统, 请将99-hp39gii.rules复制到/etc/udev/rules.d/  
+    之后执行
+    ```bash
+    sudo service udev restart
+    # 或者
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger
+    ```
+
+3. 对于非Windows系统, 请先编译 /tools/sbtools (无需安装)
+
+4. 对于Windows系统, 下载[Ninja](https://github.com/ninja-build/ninja/releases)并将exe文件添加至PATH变量
+
+5. 在此文件夹中, 执行
+    ```bash
+    mkdir ./build
+    cd ./build
+    cmake ..
+    make (或ninja)   #编译固件
+    make flash (或ninja flash)   #将固件刷入RAM
+    ```
 
 注意：HP39GII的相关驱动程序请自行安装。
 
@@ -122,7 +175,7 @@
         for (i = 0; i < l; i++) {
                 // code here
         }
-        ruturn i;
+        return i;
     ```
 
     ​	(c) 不得将for循环此三处中任意一处空出：` for ( ; ; ) `，否则请使用while循环。

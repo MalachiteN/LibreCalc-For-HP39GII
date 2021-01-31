@@ -18,92 +18,141 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
-#include <stdarg.h>
-#include "regspinctrl.h"
-#include "regslcdif.h"
-#include "regsdigctl.h"
-#include "regsuartdbg.h"
+#include "console.h"
+#include "display.h"
+#include "exception.h"
+#include "hw_irq.h"
+#include "irq.h"
+#include "keyboard.h"
+#include "memory.h"
+#include "memory_map.h"
+#include "mmu.h"
 #include "regsapbh.h"
 #include "regsclkctrl.h"
+#include "regsdigctl.h"
 #include "regsicoll.h"
-#include "mmu.h"
+#include "regslcdif.h"
+#include "regspinctrl.h"
+#include "regsuartdbg.h"
+#include "rtc.h"
 #include "uart_debug.h"
 #include "utils.h"
-#include "display.h"
-#include "keyboard.h"
-#include "exception.h"
-#include "irq.h"
-#include "hw_irq.h"
-#include "memory.h"
-#include "console.h"
+#include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 
+extern unsigned char key_matrix[5][11];
 
-extern const unsigned char test_picture[32768];	//128*256 4阶灰度图片
 extern int main();
+extern void fs_test_main();
 
-void _boot()
-{
-	disable_interrupts();					//关闭所有中断
-	switch_mode(SVC_MODE);					//切换到系统管理模式
-	asm volatile ("ldr sp,=#0x0007FF00");	//设置系统管理模式下的栈地址
-	exception_init();						//初始化异常向量
-	irq_init();								//初始化中断
-	DFLTP_init();							//初始化页表
-	enable_mmu();							//开启内存映射
-	stack_init();							//栈初始化（设定异常、系统、中断等模式下的堆栈
+extern unsigned int SVC_STACK_ADDR;
 
-	LCD_init();								//屏幕初始化
-	keyboard_init();						//键盘初始化
-	LCD_set_contrast(0x40);					//设置对比度
-	enable_interrupts();					//打开中断
-	LCD_clear_buffer();						//清屏缓存
-	LCD_dma_flush_auto_buffer_start();		//开启自动刷屏
-	//malloc_init();
-	console_init();
-	
-	printf("malloc1. %x \n",malloc(0x100));
-	printf("malloc2. %x \n",malloc(0x1));
-	printf("malloc3. %x \n",malloc(0x300));
-	fflush(stdout);
-	main();
-	/*console_puts('A');
-	console_puts(' ');
-	console_puts('C');
-	console_puts('P');
-	*/
-	while(1)
-		{
+void set_stack(unsigned int *newstackptr) __attribute__((naked));
 
+void _boot();
 
-			/*
-			uartdbg_printf("time: %d CPUID:%x\n",HW_DIGCTL_MICROSECONDS_RD(),read_cpuid());//串口输出启动时间、CPU和寄存器信息
-			uartdbg_print_regs();
+volatile unsigned int HEAP_MEMORY_COARSE_TABLE[256] __attribute__((aligned(0x400))) __attribute__((section(".kernel_heap_memory")));
 
-			
-			LCD_clear_buffer();		//清显存
-			LCD_show_string(1,1,24*16,24,24,255,"Hello World!");
-			LCD_show_string(1,25,24*12,24,16,255,"Hello World!");
-			LCD_show_string(1,40,24*12,24,12,255,"Hello World!");
+//at 0x00000000
+volatile void _kernel_init() __attribute__((section(".init"))) __attribute__((naked));
+volatile void _kernel_init() {
 
-			delay_us(10000);
-			LCD_clear_buffer();
-			//显示图片 256x128
-			for(int y=0; y<127; y++) 
-				{
-					for(int x=0; x<255; x++)
-						{
-							LCD_write_pix(x,y,255-test_picture[x+y*256]);	//将屏幕测试图片像素写入到显存中
-						}
-				}
-				while(1)
-				{	
-					LCD_scroll_up(1);
-				delay_us(20000);
-				}*/
-			
-			//delay_us(20000);
-		}
+    volatile unsigned int *tlb_base = (unsigned int *)0x800C0000;
+
+    BF_CS1n(DIGCTL_MPTEn_LOC, 0, LOC, 4000);
+    BF_CS1n(DIGCTL_MPTEn_LOC, 1, LOC, 4001);
+    BF_CS1n(DIGCTL_MPTEn_LOC, 2, LOC, 4002);
+    BF_CS1n(DIGCTL_MPTEn_LOC, 3, LOC, 4003);
+    BF_CS1n(DIGCTL_MPTEn_LOC, 4, LOC, 4004); //将暂时用不到的一级页表项移动到页表尾部
+
+    BF_CS1n(DIGCTL_MPTEn_LOC, 5, LOC, 0x0);                          //用于暂时物理内存映射到高处  
+    BF_CS1n(DIGCTL_MPTEn_LOC, 6, LOC, 4005);                         //用于把异常向量表映射到虚拟地址空间尾部
+    BF_CS1n(DIGCTL_MPTEn_LOC, 7, LOC, RAM_START_VIRT_ADDR >> 20);    //用于映射SRAM空间的一级页表项
+
+    MMU_MAP_SECTION_DEV(0x00000000, 0x00000000);          //映射物理地址0x00000000 到虚拟地址 0x00000000
+    MMU_MAP_SECTION_DEV(0x00000000, RAM_START_VIRT_ADDR); //映射物理地址0x00000000 到虚拟地址 RAM_START_VIRT_ADDR   (高端位置)
+
+    //MMU_MAP_COARSE_RAM(((unsigned int)&HEAP_MEMORY_COARSE_TABLE), KHEAP_MEMORY_VIR_START); //映射虚拟地址中内核堆内存区域到二级页表上
+
+    //for (unsigned int i = 0; i < 256 * 1024; i += 4 * 1024)
+    //    MMU_MAP_SMALL_PAGE_CACHED(KHEAP_MAP_PHY_START + i, KHEAP_MEMORY_VIR_START + i); //填写二级页表，确定虚拟内存地址中内核堆内存区所映射到的物理内存位置
+
+    register unsigned int value;
+    value = 0;
+    asm volatile("mcr p15, 0, %0, c7, c5, 0"
+                 :
+                 : "r"(value)); //清除I Cache内容
+    register unsigned int counter asm("r2");
+    register unsigned int cacheaddr asm("r3");
+
+    counter = 0;
+    while (counter < 512) {
+        cacheaddr = ((counter >> 1) & 0xe0) | ((counter & 63) << 26);
+        // CLEAN AND INVALIDATE ENTRY USING INDEX
+        asm volatile("mcr p15, 0, %0, c7, c14, 2"
+                     :
+                     : "r"(cacheaddr)); //清除D Cache
+        ++counter;
+    }
+
+    value = 0;
+    asm volatile("mcr p15, 0, %0, c8, c7, 0"
+                 :
+                 : "r"(value));
+
+    asm volatile("ldr r0,=0x800C0000");
+    asm volatile("mcr p15,0,r0,c2,c0,0"); // WRITE MMU BASE REGISTER, ALL CACHES SHOULD'VE BEEN CLEARED BEFORE
+
+    asm volatile("mvn r0,#0");
+    asm volatile("mcr p15,0,r0,c3,c0,0"); // SET R/W ACCESS PERMISSIONS FOR ALL DOMAINS
+
+    asm volatile("mrc p15, 0, r0, c1, c0, 0");
+    asm volatile("orr r0,r0,#1"); // Enable MMU
+
+    asm volatile("orr r0,r0,#5");      // ENABLE MMU AND DATA CACHES
+    asm volatile("orr r0,r0,#0x1000"); // ENABLE INSTRUCTION CACHE
+
+    asm volatile("mcr p15, 0, r0, c1, c0, 0");
+
+    asm volatile("mov r0,r0"); // NOP INSTRUCTIONS THAT ARE FETCHED FROM PHYSICAL ADDRESS
+    asm volatile("mov r0,r0");
+
+    asm volatile("b _boot");
 }
 
+
+//unsigned int save_1;
+//at 0xC0000000
+void _boot() {
+    volatile unsigned int *tlb_base = (unsigned int *)0x800C0000;
+    HW_UARTDBGDR_WR('d');
+    disable_interrupts(); //关闭所有中断
+
+    stack_init();               //栈初始化（设定异常、系统、中断等模式下的堆栈
+    switch_mode(SVC_MODE);      //切换到系统管理模式
+    set_stack(&SVC_STACK_ADDR); //设置系统管理模式下的栈地址
+    exception_init();           //初始化异常向量
+    irq_init();                 //初始化中断
+
+    keyboard_init(); //键盘初始化
+    uartdbg_printf("next boot 1.\n");
+    uartdbg_printf("test 1.\n");
+    printf("Starting Kernel...\n");
+/*
+    save_1 = 0x23231234;
+    asm volatile("ldr r0,%0" : "=m"(save_1));
+    asm volatile("ldr r0,[r0]");
+    asm volatile("str pc,%0" : "=m"(save_1));
+    printf("save:%08x\n",save_1);
+*/
+    MMU_UNMAP_SECTION_VIRT_RAM(0); //过河拆桥
+    BF_WRn(DIGCTL_MPTEn_LOC, 5, LOC, 4005);
+    flush_tlb();
+    main(); //进入内核
+
+    printf("System halt.\n");
+    while (1)
+        ;
+}
